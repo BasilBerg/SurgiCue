@@ -6,6 +6,7 @@ FPS = 60
 
 BACKGROUND_COLOR = '#EEEEEE'  # TODO: change to #FFFFFF
 COLOR = '#00FF00'
+ERASER_COLOR = '#FFFFFF'
 LONG_PRESS_DURATION = 0.5
 DOUBLE_CLICK_THRESHOLD = 0.2
 
@@ -214,10 +215,6 @@ class SurgiCue:
                     case ClickType.NONE:
                         pass
             case States.LINE:
-                if (self.latest_click != ClickType.NONE):
-                    self.line_end_coordinates = self.last_click_coordinates
-                else:
-                    self.line_start_coordinates = self.last_click_coordinates
                 match self.latest_click:
                     case ClickType.RIGHT_SINGLE:
                         self.state = States.POINTER
@@ -272,11 +269,18 @@ class SurgiCue:
                 self.draw(COLOR, DRAWING_WIDTH, x, y)
 
             case States.ERASE:
-                self.draw_rectangle(BACKGROUND_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
-                self.draw(BACKGROUND_COLOR, ERASER_WIDTH, x, y)
+                self.draw_rectangle(ERASER_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
+                self.draw(ERASER_COLOR, ERASER_WIDTH, x, y)
 
             case States.LINE:
                 self.draw_rectangle(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
+
+                if self.line_start_coordinates is None:
+                    self.line_start_coordinates = (x, y)
+                start_x, start_y = self.line_start_coordinates
+
+                self.canvas.create_line(start_x, start_y, x, y, fill=COLOR, width=LINE_WIDTH,
+                                        tags=('overlay', 'line_preview'))
 
             case States.UNDO:
                 self.state = States.POINTER
@@ -286,6 +290,15 @@ class SurgiCue:
 
             case _:
                 pass
+
+        # finish line
+        if self.state != States.LINE and self.line_start_coordinates is not None:
+
+            start_x, start_y = self.line_start_coordinates
+            end_x, end_y = self.pointer_coordinates
+            if (start_x, start_y) != (end_x, end_y):
+                self.canvas.create_line(start_x, start_y, end_x, end_y, fill=COLOR, width=LINE_WIDTH, tags=('drawn',))
+            self.line_start_coordinates = None
 
     def draw(self, color: str, line_width: int, x: int, y: int):
         if self.last_draw_point is None:
