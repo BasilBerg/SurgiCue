@@ -4,9 +4,16 @@ from enum import Enum, auto
 
 FPS = 60
 
-BACKGROUND_COLOR = '#EEEEEE'#TODO: change to #FFFFFF
+BACKGROUND_COLOR = '#EEEEEE'  # TODO: change to #FFFFFF
+COLOR = '#00FF00'
 LONG_PRESS_DURATION = 0.5
 DOUBLE_CLICK_THRESHOLD = 0.2
+
+POINTER_SIZE = 50
+UI_LINE_WIDTH = 5
+DRAWING_WIDTH = 10
+ERASER_WIDTH = 30
+LINE_WIDTH = 10
 
 
 def get_current_time():
@@ -48,6 +55,14 @@ class SurgiCue:
         self.last_right_click_time = 0
         self.last_right_release_time = 0
         self.latest_click = ClickType.NONE
+        self.last_click_coordinates = (0, 0)
+        self.pointer_coordinates = (0, 0)
+
+        self.drawn_object_ids = []
+        self.last_draw_point = None
+        self.line_start_coordinates = None
+        self.line_end_coordinates = None
+        self.line_preview_id = None
 
         self.root.bind('<Escape>', lambda e: self.root.destroy())
         self.canvas.bind('<ButtonPress-1>', self.handle_clicks('left_pressed'))
@@ -110,17 +125,18 @@ class SurgiCue:
                 #     self.last_click = ClickType.RIGHT_DOUBLE
                 #     print('Double Right Click detected')
 
+            self.last_click_coordinates = (x, y)
+
         return handler
 
     def handle_motion(self):
         def handler(event):
-            x, y = event.x, event.y
+            self.pointer_coordinates = (event.x, event.y)
 
-        #  print(f'Mouse moved to X: {x}, Y: {y}')
         return handler
 
     def reset_latest_click(self):
-        self.latest_click = None
+        self.latest_click = ClickType.NONE
 
     def transition_states(self):
         match self.state:
@@ -146,7 +162,7 @@ class SurgiCue:
                         self.state = States.CLEAR
                         print(f'Transition to CLEAR state, time: {get_current_time()}')
                         self.reset_latest_click()
-                    case None:
+                    case ClickType.NONE:
                         pass
 
             case States.DRAW:
@@ -171,7 +187,7 @@ class SurgiCue:
                         self.state = States.CLEAR
                         print(f'Transition to CLEAR state, time: {get_current_time()}')
                         self.reset_latest_click()
-                    case None:
+                    case ClickType.NONE:
                         pass
             case States.ERASE:
                 match self.latest_click:
@@ -195,9 +211,13 @@ class SurgiCue:
                         self.state = States.CLEAR
                         print(f'Transition to CLEAR state, time: {get_current_time()}')
                         self.reset_latest_click()
-                    case None:
+                    case ClickType.NONE:
                         pass
             case States.LINE:
+                if (self.latest_click != ClickType.NONE):
+                    self.line_end_coordinates = self.last_click_coordinates
+                else:
+                    self.line_start_coordinates = self.last_click_coordinates
                 match self.latest_click:
                     case ClickType.RIGHT_SINGLE:
                         self.state = States.POINTER
@@ -219,20 +239,76 @@ class SurgiCue:
                         self.state = States.CLEAR
                         print(f'Transition to CLEAR state, time: {get_current_time()}')
                         self.reset_latest_click()
-                    case None:
+                    case ClickType.NONE:
                         pass
             case States.UNDO:
-                self.state = States.POINTER
-                print(f'Transition to POINTER state, time: {get_current_time()}')
+                pass
             case States.CLEAR:
-                self.state = States.POINTER
-                print(f'Transition to POINTER state, time: {get_current_time()}')
+                pass
             case _:
                 pass
                 # TODO:throw error
 
+    def perform_state_actions(self):
+        self.canvas.delete('overlay')
+
+        x, y = self.pointer_coordinates
+
+        if (self.line_end_coordinates != None):
+            # draw line
+            self.line_end_coordinates = None
+
+        match self.state:
+            case States.POINTER:
+                half = POINTER_SIZE // 2
+                self.canvas.create_line(x - half, y, x + half, y, fill=COLOR, width=UI_LINE_WIDTH,
+                                        tags=('overlay', 'pointer'))
+                self.canvas.create_line(x, y - half, x, y + half, fill=COLOR, width=UI_LINE_WIDTH,
+                                        tags=('overlay', 'pointer'))
+                self.last_draw_point = None
+            case States.DRAW:
+
+                self.draw_rectangle(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
+                self.draw(COLOR, DRAWING_WIDTH, x, y)
+
+            case States.ERASE:
+                self.draw_rectangle(BACKGROUND_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
+                self.draw(BACKGROUND_COLOR, ERASER_WIDTH, x, y)
+
+            case States.LINE:
+                self.draw_rectangle(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
+
+            case States.UNDO:
+                self.state = States.POINTER
+
+            case States.CLEAR:
+                self.state = States.POINTER
+
+            case _:
+                pass
+
+    def draw(self, color: str, line_width: int, x: int, y: int):
+        if self.last_draw_point is None:
+            self.last_draw_point = (x, y)
+        else:
+            px, py = self.last_draw_point
+            if (px, py) != (x, y):
+                line_id = self.canvas.create_line(px, py, x, y, fill=color, width=line_width,
+                                                  capstyle='round', tags=('drawn',))
+                self.drawn_object_ids.append(line_id)
+                self.last_draw_point = (x, y)
+
+    def draw_rectangle(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
+        half = line_width // 2
+        self.canvas.create_rectangle(x - half, y - half, x + half, y + half,
+                                     fill=color, outline=outline_color, width=border_width,
+                                     tags=('overlay', 'pointer'))
+
     def loop(self):
         self.transition_states()
+
+        self.perform_state_actions()
+
         self.root.after(1000 // FPS, self.loop)
 
     def run(self):
