@@ -286,6 +286,7 @@ class SurgiCue:
                 self.state = States.POINTER
 
             case States.CLEAR:
+                self.canvas.delete('drawn')
                 self.state = States.POINTER
 
             case _:
