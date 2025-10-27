@@ -127,6 +127,7 @@ class SurgiCue:
                 #     print('Double Right Click detected')
 
             self.last_click_coordinates = (x, y)
+            self.transition_states()
 
         return handler
 
@@ -136,33 +137,20 @@ class SurgiCue:
 
         return handler
 
-    def reset_latest_click(self):
-        self.latest_click = ClickType.NONE
-
     def transition_states(self):
         match self.state:
             case States.POINTER:
                 match self.latest_click:
                     case ClickType.RIGHT_SINGLE:
                         self.state = States.DRAW
-                        print(f'Transition to DRAW state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.RIGHT_DOUBLE:
                         self.state = States.LINE
-                        print(f'Transition to LINE state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_SINGLE:
                         self.state = States.ERASE
-                        print(f'Transition to ERASE state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_DOUBLE:
                         self.state = States.UNDO
-                        print(f'Transition to UNDO state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
                         self.state = States.CLEAR
-                        print(f'Transition to CLEAR state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.NONE:
                         pass
 
@@ -170,72 +158,42 @@ class SurgiCue:
                 match self.latest_click:
                     case ClickType.RIGHT_SINGLE:
                         self.state = States.POINTER
-                        print(f'Transition to POINTER state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.RIGHT_DOUBLE:
                         self.state = States.LINE
-                        print(f'Transition to LINE state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_SINGLE:
                         self.state = States.ERASE
-                        print(f'Transition to ERASE state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_DOUBLE:
                         self.state = States.UNDO
-                        print(f'Transition to UNDO state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
                         self.state = States.CLEAR
-                        print(f'Transition to CLEAR state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.NONE:
                         pass
             case States.ERASE:
                 match self.latest_click:
                     case ClickType.RIGHT_SINGLE:
                         self.state = States.DRAW
-                        print(f'Transition to DRAW state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.RIGHT_DOUBLE:
                         self.state = States.LINE
-                        print(f'Transition to LINE state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_SINGLE:
                         self.state = States.POINTER
-                        print(f'Transition to POINTER state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_DOUBLE:
                         self.state = States.UNDO
-                        print(f'Transition to UNDO state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
                         self.state = States.CLEAR
-                        print(f'Transition to CLEAR state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.NONE:
                         pass
             case States.LINE:
                 match self.latest_click:
                     case ClickType.RIGHT_SINGLE:
                         self.state = States.POINTER
-                        print(f'Transition to POINTER state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.RIGHT_DOUBLE:
                         self.state = States.LINE
-                        print(f'Transition to LINE state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_SINGLE:
                         self.state = States.ERASE
-                        print(f'Transition to ERASE state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_DOUBLE:
                         self.state = States.UNDO
-                        print(f'Transition to UNDO state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
                         self.state = States.CLEAR
-                        print(f'Transition to CLEAR state, time: {get_current_time()}')
-                        self.reset_latest_click()
                     case ClickType.NONE:
                         pass
             case States.UNDO:
@@ -245,6 +203,7 @@ class SurgiCue:
             case _:
                 pass
                 # TODO:throw error
+        self.latest_click = ClickType.NONE
 
     def perform_state_actions(self):
         self.canvas.delete('overlay')
@@ -319,7 +278,6 @@ class SurgiCue:
                                      tags=('overlay', 'pointer'))
 
     def loop(self):
-        self.transition_states()
 
         self.perform_state_actions()
 
