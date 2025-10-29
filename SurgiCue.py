@@ -60,8 +60,6 @@ class SurgiCue:
         except Exception as e:
             print(f"[WARNING] Icon not found ({icon_path}): {e}")
 
-
-
         self.w = self.root.winfo_screenwidth()
         self.h = self.root.winfo_screenheight()
         self.canvas = tkinter.Canvas(self.root, width=self.w, height=self.h, bg=BACKGROUND_COLOR, highlightthickness=0)
@@ -76,8 +74,12 @@ class SurgiCue:
         self.pointer_coordinates = (0, 0)
 
         self.drawn_object_ids = []
-        self.last_draw_point = None
+
         self.line_start_coordinates = None
+        self.draw_coordinates = []
+        self.erase_coordinates = []
+        self.current_draw_id = None
+        self.current_erase_id = None
         self.line_end_coordinates = None
         self.line_preview_id = None
 
@@ -241,17 +243,16 @@ class SurgiCue:
                                         tags=('overlay', 'pointer'))
                 self.canvas.create_line(x, y - half, x, y + half, fill=COLOR, width=UI_LINE_WIDTH,
                                         tags=('overlay', 'pointer'))
-                self.last_draw_point = None
 
             case States.DRAW:
                 icon_filename = 'draw.png'
                 self.draw_rectangle(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
-                self.draw(COLOR, DRAWING_WIDTH, x, y)
+                self.draw(x, y)
 
             case States.ERASE:
                 icon_filename = 'erase.png'
                 self.draw_rectangle(ERASER_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
-                self.draw(ERASER_COLOR, ERASER_WIDTH, x, y)
+                self.erase(x, y)
 
             case States.LINE:
                 icon_filename = 'line.png'
@@ -267,7 +268,10 @@ class SurgiCue:
             case States.UNDO:
                 self.last_action_icon_time = get_current_time()
                 icon_filename = 'undo.png'
-                # TODO implement
+
+                if len(self.drawn_object_ids) > 0:
+                    object_to_delete = self.drawn_object_ids.pop()
+                    self.canvas.delete(object_to_delete)
 
                 self.state = States.POINTER
 
@@ -282,25 +286,75 @@ class SurgiCue:
 
         # finish line
         if self.state != States.LINE and self.line_start_coordinates is not None:
-
             start_x, start_y = self.line_start_coordinates
             end_x, end_y = self.pointer_coordinates
             if (start_x, start_y) != (end_x, end_y):
-                self.canvas.create_line(start_x, start_y, end_x, end_y, fill=COLOR, width=LINE_WIDTH, tags=('drawn',))
+                object_id = self.canvas.create_line(start_x, start_y, end_x, end_y, fill=COLOR, width=LINE_WIDTH,
+                                                    tags=('drawn',))
+                self.drawn_object_ids.append(object_id)
             self.line_start_coordinates = None
 
         self.display_icon(icon_filename)
 
-    def draw(self, color: str, line_width: int, x: int, y: int):
-        if self.last_draw_point is None:
-            self.last_draw_point = (x, y)
-        else:
-            px, py = self.last_draw_point
-            if (px, py) != (x, y):
-                line_id = self.canvas.create_line(px, py, x, y, fill=color, width=line_width,
-                                                  capstyle='round', tags=('drawn',))
-                self.drawn_object_ids.append(line_id)
-                self.last_draw_point = (x, y)
+        if self.state != States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
+            if (self.current_draw_id is not None):
+                self.drawn_object_ids.append(self.current_draw_id)
+            self.draw_coordinates = []
+            self.current_draw_id = None
+
+        if self.state != States.ERASE and (self.current_erase_id is not None or len(self.erase_coordinates) == 1):
+            if (self.current_erase_id is not None):
+                self.drawn_object_ids.append(self.current_erase_id)
+            self.erase_coordinates = []
+            self.current_erase_id = None
+
+    def draw(self, x: int, y: int):
+        coordinates_length = len(self.draw_coordinates)
+        if coordinates_length > 0:
+            previous_x, previous_y = self.draw_coordinates[-1]
+            if (round(previous_x), round(previous_y)) == (round(x), round(y)):
+                return
+
+            if coordinates_length == 1:
+                self.current_draw_id = self.canvas.create_line(
+                    previous_x, previous_y, x, y,
+                    fill=COLOR,
+                    width=DRAWING_WIDTH,
+                    smooth=True,
+                    capstyle='round',
+                    tags=('drawn')
+                )
+            else:
+                self.canvas.coords(
+                    self.current_draw_id,
+                    *self.canvas.coords(self.current_draw_id),
+                    x, y
+                )
+        self.draw_coordinates.append((x, y))
+
+    def erase(self, x: int, y: int):
+        coordinates_length = len(self.erase_coordinates)
+        if coordinates_length > 0:
+            previous_x, previous_y = self.erase_coordinates[-1]
+            if (round(previous_x), round(previous_y)) == (round(x), round(y)):
+                return
+
+            if coordinates_length == 1:
+                self.current_erase_id = self.canvas.create_line(
+                    previous_x, previous_y, x, y,
+                    fill=ERASER_COLOR,
+                    width=ERASER_WIDTH,
+                    smooth=True,
+                    capstyle='round',
+                    tags=('drawn')
+                )
+            else:
+                self.canvas.coords(
+                    self.current_erase_id,
+                    *self.canvas.coords(self.current_erase_id),
+                    x, y
+                )
+        self.erase_coordinates.append((x, y))
 
     def draw_rectangle(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
         half = line_width // 2
