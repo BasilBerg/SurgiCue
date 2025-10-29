@@ -80,6 +80,7 @@ class SurgiCue:
         self.erase_coordinates = []
         self.current_draw_id = None
         self.current_erase_id = None
+        self.current_line_id = None
         self.line_end_coordinates = None
         self.line_preview_id = None
 
@@ -259,13 +260,7 @@ class SurgiCue:
             case States.LINE:
                 icon_filename = 'line.png'
                 self.draw_rectangle(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
-
-                if self.line_start_coordinates is None:
-                    self.line_start_coordinates = (x, y)
-                start_x, start_y = self.line_start_coordinates
-
-                self.canvas.create_line(start_x, start_y, x, y, fill=COLOR, width=LINE_WIDTH,
-                                        tags=('overlay', 'line_preview'))
+                self.draw_line(x, y)
 
             case States.UNDO:
                 self.last_action_icon_time = get_current_time()
@@ -284,22 +279,20 @@ class SurgiCue:
             case _:
                 pass
 
-        # finish line
-        if self.state != States.LINE and self.line_start_coordinates is not None:
-            start_x, start_y = self.line_start_coordinates
-            end_x, end_y = self.pointer_coordinates
-            if (start_x, start_y) != (end_x, end_y):
-                object_id = self.canvas.create_line(start_x, start_y, end_x, end_y, fill=COLOR, width=LINE_WIDTH,
-                                                    tags=('drawn',))
-                self.drawn_object_ids.append(object_id)
-            self.line_start_coordinates = None
-
+        # finish drawing
         if self.state != States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
             if (self.current_draw_id is not None):
                 self.drawn_object_ids.append(self.current_draw_id)
             self.draw_coordinates = []
             self.current_draw_id = None
 
+        # finish line
+        if self.state != States.LINE and self.current_line_id is not None:
+            self.drawn_object_ids.append(self.current_line_id)
+            self.current_line_id = None
+            self.line_start_coordinates = None
+
+        # finish erasing
         if self.state != States.ERASE and (self.current_erase_id is not None or len(self.erase_coordinates) == 1):
             if (self.current_erase_id is not None):
                 self.drawn_object_ids.append(self.current_erase_id)
@@ -331,6 +324,17 @@ class SurgiCue:
                     x, y
                 )
         self.draw_coordinates.append((x, y))
+
+    def draw_line(self, x, y):
+        if self.line_start_coordinates is None:
+            self.line_start_coordinates = (x, y)
+        start_x, start_y = self.line_start_coordinates
+
+        if (self.current_line_id is None):
+            self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=COLOR, width=LINE_WIDTH,
+                                                           tags=('drawn'))
+        else:
+            self.canvas.coords(self.current_line_id, start_x, start_y, x, y)
 
     def erase(self, x: int, y: int):
         coordinates_length = len(self.erase_coordinates)
@@ -367,10 +371,6 @@ class SurgiCue:
                 new_id = self.canvas.create_line(*coords, **options_extracted)
                 self.drawn_object_ids.append(new_id)
             self.cleared_objects.clear()
-
-
-
-
 
     def clear_canvas(self):
         self.cleared_objects.clear()
