@@ -53,6 +53,7 @@ class SurgiCue:
         self.root = tkinter.Tk()
         self.root.title('SurgiCue')
         self.root.attributes('-fullscreen', True)
+        self.root.config(cursor="none")
         try:
             icon_path = os.path.join(ICON_DIRECTORY, 'window-icon.png')
             self._win_icon = tkinter.PhotoImage(file=icon_path)
@@ -104,9 +105,7 @@ class SurgiCue:
     def handle_clicks(self, event_type):
         def handler(event):
             x, y = event.x, event.y
-            # print(f'Event: {event_type}, X: {x}, Y: {y}')
             current_time = get_current_time()
-            print(current_time)
 
             match event_type:
                 case 'left_pressed':
@@ -126,10 +125,6 @@ class SurgiCue:
                     else:
                         self.latest_click = ClickType.LEFT_LONG
 
-                # case 'left_double':
-                #     print('Double Left Click detected')
-                #     self.last_click = ClickType.LEFT_DOUBLE
-
                 case 'right_pressed':
                     self.last_right_click_time = current_time
 
@@ -144,10 +139,6 @@ class SurgiCue:
 
                     else:
                         self.latest_click = ClickType.RIGHT_LONG
-
-                # case 'right_double':
-                #     self.last_click = ClickType.RIGHT_DOUBLE
-                #     print('Double Right Click detected')
 
             self.last_click_coordinates = (x, y)
             self.transition_states()
@@ -241,25 +232,20 @@ class SurgiCue:
         match self.state:
             case States.POINTER:
                 # icon_filename = 'pointer.png'
-                half = POINTER_SIZE // 2
-                self.canvas.create_line(x - half, y, x + half, y, fill=COLOR, width=UI_LINE_WIDTH,
-                                        tags=('overlay', 'pointer'))
-                self.canvas.create_line(x, y - half, x, y + half, fill=COLOR, width=UI_LINE_WIDTH,
-                                        tags=('overlay', 'pointer'))
-
+                self.draw_crosshair(x, y)
             case States.DRAW:
                 icon_filename = 'draw.png'
-                self.draw_rectangle(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
+                self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
                 self.draw(x, y)
 
             case States.ERASE:
                 icon_filename = 'erase.png'
-                self.draw_rectangle(ERASER_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
+                self.draw_tool_preview(ERASER_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
                 self.erase(x, y)
 
             case States.LINE:
                 icon_filename = 'line.png'
-                self.draw_rectangle(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
+                self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
                 self.draw_line(x, y)
 
             case States.UNDO:
@@ -305,7 +291,7 @@ class SurgiCue:
         coordinates_length = len(self.draw_coordinates)
         if coordinates_length > 0:
             previous_x, previous_y = self.draw_coordinates[-1]
-            if (round(previous_x), round(previous_y)) == (round(x), round(y)):
+            if (previous_x, previous_y) == (x, y):
                 return
 
             if coordinates_length == 1:
@@ -332,7 +318,7 @@ class SurgiCue:
 
         if (self.current_line_id is None):
             self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=COLOR, width=LINE_WIDTH,
-                                                           tags=('drawn'))
+                                                           capstyle='round', tags=('drawn'))
         else:
             self.canvas.coords(self.current_line_id, start_x, start_y, x, y)
 
@@ -340,7 +326,7 @@ class SurgiCue:
         coordinates_length = len(self.erase_coordinates)
         if coordinates_length > 0:
             previous_x, previous_y = self.erase_coordinates[-1]
-            if (round(previous_x), round(previous_y)) == (round(x), round(y)):
+            if (previous_x, previous_y) == (x, y):
                 return
 
             if coordinates_length == 1:
@@ -381,11 +367,18 @@ class SurgiCue:
             self.canvas.delete(object_id)
         self.drawn_object_ids.clear()
 
-    def draw_rectangle(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
+    def draw_tool_preview(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
         half = line_width // 2
         self.canvas.create_rectangle(x - half, y - half, x + half, y + half,
                                      fill=color, outline=outline_color, width=border_width,
                                      tags=('overlay', 'pointer'))
+
+    def draw_crosshair(self, x: int, y: int):
+        half = POINTER_SIZE // 2
+        self.canvas.create_line(x - half, y, x + half, y, fill=COLOR, width=UI_LINE_WIDTH,
+                                tags=('overlay', 'pointer'))
+        self.canvas.create_line(x, y - half, x, y + half, fill=COLOR, width=UI_LINE_WIDTH,
+                                tags=('overlay', 'pointer'))
 
     def loop(self):
         self.perform_state_actions()
