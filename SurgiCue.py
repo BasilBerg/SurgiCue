@@ -83,6 +83,8 @@ class SurgiCue:
         self.line_end_coordinates = None
         self.line_preview_id = None
 
+        self.cleared_objects = []
+
         self.last_action_icon_time = 0
 
         self.root.bind('<Escape>', lambda e: self.root.destroy())
@@ -269,16 +271,14 @@ class SurgiCue:
                 self.last_action_icon_time = get_current_time()
                 icon_filename = 'undo.png'
 
-                if len(self.drawn_object_ids) > 0:
-                    object_to_delete = self.drawn_object_ids.pop()
-                    self.canvas.delete(object_to_delete)
+                self.undo()
 
                 self.state = States.POINTER
 
             case States.CLEAR:
                 self.last_action_icon_time = get_current_time()
                 icon_filename = 'clear.png'
-                self.canvas.delete('drawn')
+                self.clear_canvas()
                 self.state = States.POINTER
 
             case _:
@@ -294,8 +294,6 @@ class SurgiCue:
                 self.drawn_object_ids.append(object_id)
             self.line_start_coordinates = None
 
-        self.display_icon(icon_filename)
-
         if self.state != States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
             if (self.current_draw_id is not None):
                 self.drawn_object_ids.append(self.current_draw_id)
@@ -307,6 +305,8 @@ class SurgiCue:
                 self.drawn_object_ids.append(self.current_erase_id)
             self.erase_coordinates = []
             self.current_erase_id = None
+
+        self.display_icon(icon_filename)
 
     def draw(self, x: int, y: int):
         coordinates_length = len(self.draw_coordinates)
@@ -355,6 +355,31 @@ class SurgiCue:
                     x, y
                 )
         self.erase_coordinates.append((x, y))
+
+    def undo(self):
+        if len(self.drawn_object_ids) > 0:
+            object_to_delete = self.drawn_object_ids.pop()
+            self.canvas.delete(object_to_delete)
+        elif len(self.cleared_objects) > 0:
+            for cleared_object in self.cleared_objects:
+                coords, options = cleared_object
+                options_extracted = {key: val[-1] for key, val in options.items()}
+                new_id = self.canvas.create_line(*coords, **options_extracted)
+                self.drawn_object_ids.append(new_id)
+            self.cleared_objects.clear()
+
+
+
+
+
+    def clear_canvas(self):
+        self.cleared_objects.clear()
+        for object_id in self.drawn_object_ids:
+            coords = self.canvas.coords(object_id)
+            options = self.canvas.itemconfig(object_id)
+            self.cleared_objects.append((coords, options))
+            self.canvas.delete(object_id)
+        self.drawn_object_ids.clear()
 
     def draw_rectangle(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
         half = line_width // 2
