@@ -88,6 +88,7 @@ class SurgiCue:
         self.cleared_objects = []
 
         self.last_action_icon_time = 0
+        self.icon_cache = {}
 
         self.root.bind('<Escape>', lambda e: self.root.destroy())
         self.canvas.bind('<ButtonPress-1>', self.handle_clicks('left_pressed'))
@@ -299,8 +300,6 @@ class SurgiCue:
                     previous_x, previous_y, x, y,
                     fill=COLOR,
                     width=DRAWING_WIDTH,
-                    smooth=True,
-                    capstyle='round',
                     tags=('drawn')
                 )
             else:
@@ -334,8 +333,6 @@ class SurgiCue:
                     previous_x, previous_y, x, y,
                     fill=ERASER_COLOR,
                     width=ERASER_WIDTH,
-                    smooth=True,
-                    capstyle='round',
                     tags=('drawn')
                 )
             else:
@@ -388,29 +385,38 @@ class SurgiCue:
         self.root.mainloop()
 
     def display_icon(self, filename: str):
-        if (filename == ''):
-            if (get_current_time() - self.last_action_icon_time > ICON_DURATION):
-                self.canvas.delete('icon')
-                self.last_action_icon_time = 0
-            return
+        # todo: fix issue when displaying undo
+        if ((get_current_time() - self.last_action_icon_time > ICON_DURATION)):
+            self.canvas.delete('icon')
+            self.last_action_icon_time = 0
 
         icon_position = (10, 10)
 
         try:
-            icon_path = os.path.join(ICON_DIRECTORY, filename)
-            icon = Image.open(icon_path).convert("RGBA")
-            resized_icon = icon.resize((ICON_SIZE, ICON_SIZE))
-            alpha_channel = resized_icon.getchannel('A')
-            tinted_icon = Image.new("RGBA", resized_icon.size, ICON_TINT)
-            tinted_icon.putalpha(alpha_channel)
-            self.icon_image = ImageTk.PhotoImage(tinted_icon)
-            self.canvas.create_image(icon_position, anchor="nw", image=self.icon_image, tags=('icon'))
+            icon = self.load_icon(filename)
+            self.canvas.create_image(icon_position, anchor="nw", image=icon, tags=('icon'))
 
         except Exception as e:
-            print(f"[WARNING] Icon not found ({icon_path}): {e}")
+
+            print(f"[WARNING] Error loading Icon ({filename}), using text as fallback: {e}")
             toolname = filename.split(".")[0]
             self.canvas.create_text(icon_position, anchor="nw", text=toolname, fill=ICON_TINT,
                                     font=("Arial", ICON_SIZE // 5, "bold"), tags=('icon'))
+
+    def load_icon(self, filename):
+        if filename in self.icon_cache:
+            return self.icon_cache[filename]
+
+        icon_path = os.path.join(ICON_DIRECTORY, filename)
+        icon = Image.open(icon_path).convert("RGBA")
+        resized_icon = icon.resize((ICON_SIZE, ICON_SIZE))
+        alpha_channel = resized_icon.getchannel('A')
+        tinted_icon = Image.new("RGBA", resized_icon.size, ICON_TINT)
+        tinted_icon.putalpha(alpha_channel)
+
+        photo_image = ImageTk.PhotoImage(tinted_icon)
+        self.icon_cache[filename] = photo_image
+        return photo_image
 
 
 if __name__ == '__main__':
