@@ -5,32 +5,31 @@ from enum import Enum, auto
 from PIL import Image, ImageTk
 import logging
 
-FPS = 60
-
-BACKGROUND_COLOR = '#BBBBBB'  # TODO: change to #FFFFFF
-COLOR = '#00FF00'
-ERASER_COLOR = '#FFFFFF'
-LONG_PRESS_DURATION = 0.5
-DOUBLE_CLICK_THRESHOLD = 0.2
-
-POINTER_SIZE = 50
-UI_LINE_WIDTH = 5
-DRAWING_WIDTH = 10
-ERASER_WIDTH = 30
-LINE_WIDTH = 10
-
-ICON_DIRECTORY = 'icons/'
-ICON_SIZE = 100
-ICON_TINT = '#FF0000'
-ICON_DURATION = 0.5
-
 logging.basicConfig(
     level=logging.INFO,
-    filename="SugiCue.log",
+    filename="SurgiCue.log",
     format="{asctime} - {levelname} - {message}",
     style="{"
 )
 
+FPS = 60
+
+BACKGROUND_COLOR = '#FFFFFF'  # TODO: change to #FFFFFF
+DRAWING_COLOR = '#00FF00'
+ERASER_COLOR = BACKGROUND_COLOR
+LONG_PRESS_DURATION = 0.5
+DOUBLE_CLICK_THRESHOLD = 0.2
+
+POINTER_SIZE = 50
+UI_LINE_WIDTH = POINTER_SIZE/10
+DRAWING_WIDTH = POINTER_SIZE/5
+ERASER_WIDTH = POINTER_SIZE*2
+LINE_WIDTH = DRAWING_WIDTH
+
+ICON_DIRECTORY = 'icons/'
+ICON_SIZE = 150
+ICON_TINT = DRAWING_COLOR
+ICON_DURATION = 0.5
 
 def get_current_time():
     return time.perf_counter()
@@ -62,17 +61,25 @@ class SurgiCue:
         self.root.title('SurgiCue')
         self.root.attributes('-fullscreen', True)
         self.root.config(cursor="none")
+        icon_path = os.path.join(ICON_DIRECTORY, 'window-icon.png')
         try:
-            icon_path = os.path.join(ICON_DIRECTORY, 'window-icon.png')
             self._win_icon = tkinter.PhotoImage(file=icon_path)
             self.root.iconphoto(True, self._win_icon)
         except Exception as e:
-            logging.warning(f"Icon not found ({icon_path}): {e}")
+            logging.warning(f"Window Icon could not be set. ({icon_path}): {e}")
 
-        self.w = self.root.winfo_screenwidth()
-        self.h = self.root.winfo_screenheight()
-        self.canvas = tkinter.Canvas(self.root, width=self.w, height=self.h, bg=BACKGROUND_COLOR, highlightthickness=0)
-        self.canvas.pack(fill=tkinter.BOTH, expand=True)
+        self.screen_width = self.root.winfo_screenwidth()
+        self.screen_height = self.root.winfo_screenheight()
+        self.canvas = tkinter.Canvas(self.root, width=self.screen_width, height=self.screen_height, bg=BACKGROUND_COLOR,
+                                     highlightthickness=0)
+        self.canvas.pack(fill='both', expand=True)
+
+        self.root.bind('<Escape>', lambda event: self.root.destroy())
+        self.canvas.bind('<ButtonPress-1>', self.handle_clicks('left_pressed'))
+        self.canvas.bind('<ButtonRelease-1>', self.handle_clicks('left_released'))
+        self.canvas.bind('<ButtonPress-3>', self.handle_clicks('right_pressed'))
+        self.canvas.bind('<ButtonRelease-3>', self.handle_clicks('right_released'))
+        self.canvas.bind('<Motion>', self.handle_motion())
 
         self.last_left_click_time = 0
         self.last_left_release_time = 0
@@ -83,27 +90,17 @@ class SurgiCue:
         self.pointer_coordinates = (0, 0)
 
         self.drawn_object_ids = []
-
         self.line_start_coordinates = None
         self.draw_coordinates = []
         self.erase_coordinates = []
         self.current_draw_id = None
         self.current_erase_id = None
         self.current_line_id = None
-        self.line_end_coordinates = None
-        self.line_preview_id = None
 
         self.cleared_objects = []
 
         self.last_action_icon_time = 0
         self.icon_cache = {}
-
-        self.root.bind('<Escape>', lambda e: self.root.destroy())
-        self.canvas.bind('<ButtonPress-1>', self.handle_clicks('left_pressed'))
-        self.canvas.bind('<ButtonRelease-1>', self.handle_clicks('left_released'))
-        self.canvas.bind('<ButtonPress-3>', self.handle_clicks('right_pressed'))
-        self.canvas.bind('<ButtonRelease-3>', self.handle_clicks('right_released'))
-        self.canvas.bind('<Motion>', self.handle_motion())
 
         self.state = States.POINTER
         self.failsafe_mode = False
@@ -142,8 +139,8 @@ class SurgiCue:
                             self.latest_click = ClickType.RIGHT_DOUBLE
 
                         elif current_time - self.last_right_click_time < LONG_PRESS_DURATION:
-                            self.latest_click = ClickType.RIGHT_SINGLE
                             self.last_right_release_time = current_time
+                            self.latest_click = ClickType.RIGHT_SINGLE
 
                         else:
                             self.latest_click = ClickType.RIGHT_LONG
@@ -229,41 +226,53 @@ class SurgiCue:
                 case States.FAILSAFE:
                     pass
                 case _:
-                    self.start_failsafe_mode('Unknown State during transition', Exception('Invalid State'))
+                    self.start_failsafe_mode('Unknown State during transition', ValueError('Invalid State'))
                     pass
             self.latest_click = ClickType.NONE
         except Exception as e:
             self.start_failsafe_mode('Error during state transition', e)
+
+    def start_failsafe_mode(self, message: str, exception: Exception):
+        logging.critical('Entering failsafe mode due to error: %s', message)
+        logging.exception(exception)
+        self.canvas.delete('all')
+        self.failsafe_mode = True
+        try:
+            self.canvas.create_text(10, 10, anchor="nw", text='FAILSAFE MODE', fill=ICON_TINT,
+                                    font=("Arial", ICON_SIZE // 5, "bold"), tags='icon')
+            self.canvas.unbind('<ButtonPress-1>')
+            self.canvas.unbind('<ButtonRelease-1>')
+            self.canvas.unbind('<ButtonPress-3>')
+            self.canvas.unbind('<ButtonRelease-3>')
+            self.canvas.unbind('<Motion>')
+        except Exception as e:
+            logging.exception('Error while starting failsafe mode: %s', e)
 
     def perform_state_actions(self):
         try:
             self.canvas.delete('overlay')
 
             icon_filename = ''
-            x, y = self.pointer_coordinates
-
-            if (self.line_end_coordinates != None):
-                # draw line
-                self.line_end_coordinates = None
+            pointer_x, pointer_y = self.pointer_coordinates
 
             match self.state:
                 case States.POINTER:
                     # icon_filename = 'pointer.png'
-                    self.draw_crosshair(x, y)
+                    self.display_crosshair(pointer_x, pointer_y)
                 case States.DRAW:
                     icon_filename = 'draw.png'
-                    self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
-                    self.draw(x, y)
+                    self.display_tool_preview(DRAWING_COLOR, DRAWING_COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, pointer_x, pointer_y)
+                    self.draw(pointer_x, pointer_y)
 
                 case States.ERASE:
                     icon_filename = 'erase.png'
-                    self.draw_tool_preview(ERASER_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
-                    self.erase(x, y)
+                    self.display_tool_preview(ERASER_COLOR, DRAWING_COLOR, ERASER_WIDTH, UI_LINE_WIDTH, pointer_x, pointer_y)
+                    self.erase(pointer_x, pointer_y)
 
                 case States.LINE:
                     icon_filename = 'line.png'
-                    self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
-                    self.draw_line(x, y)
+                    self.display_tool_preview(DRAWING_COLOR, DRAWING_COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, pointer_x, pointer_y)
+                    self.draw_line(pointer_x, pointer_y)
 
                 case States.UNDO:
                     self.last_action_icon_time = get_current_time()
@@ -287,7 +296,7 @@ class SurgiCue:
 
             # finish drawing
             if self.state != States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
-                if (self.current_draw_id is not None):
+                if self.current_draw_id is not None:
                     self.drawn_object_ids.append(self.current_draw_id)
                 self.draw_coordinates = []
                 self.current_draw_id = None
@@ -300,7 +309,7 @@ class SurgiCue:
 
             # finish erasing
             if self.state != States.ERASE and (self.current_erase_id is not None or len(self.erase_coordinates) == 1):
-                if (self.current_erase_id is not None):
+                if self.current_erase_id is not None:
                     self.drawn_object_ids.append(self.current_erase_id)
                 self.erase_coordinates = []
                 self.current_erase_id = None
@@ -320,9 +329,9 @@ class SurgiCue:
                 if coordinates_length == 1:
                     self.current_draw_id = self.canvas.create_line(
                         previous_x, previous_y, x, y,
-                        fill=COLOR,
+                        fill=DRAWING_COLOR,
                         width=DRAWING_WIDTH,
-                        tags=('drawn')
+                        tags='drawn'
                     )
                 else:
                     self.canvas.coords(
@@ -340,9 +349,9 @@ class SurgiCue:
                 self.line_start_coordinates = (x, y)
             start_x, start_y = self.line_start_coordinates
 
-            if (self.current_line_id is None):
-                self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=COLOR, width=LINE_WIDTH,
-                                                               capstyle='round', tags=('drawn'))
+            if self.current_line_id is None:
+                self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=DRAWING_COLOR, width=LINE_WIDTH,
+                                                               capstyle='round', tags='drawn')
             else:
                 self.canvas.coords(self.current_line_id, start_x, start_y, x, y)
         except Exception as e:
@@ -361,27 +370,7 @@ class SurgiCue:
                         previous_x, previous_y, x, y,
                         fill=ERASER_COLOR,
                         width=ERASER_WIDTH,
-                        tags=('drawn')
-                    )
-                else:
-                    self.canvas.coords(
-                        self.current_erase_id,
-                        *self.canvas.coords(self.current_erase_id),
-                        x, y
-                    )
-            self.erase_coordinates.append((x, y))
-            coordinates_length = len(self.erase_coordinates)
-            if coordinates_length > 0:
-                previous_x, previous_y = self.erase_coordinates[-1]
-                if (previous_x, previous_y) == (x, y):
-                    return
-
-                if coordinates_length == 1:
-                    self.current_erase_id = self.canvas.create_line(
-                        previous_x, previous_y, x, y,
-                        fill=ERASER_COLOR,
-                        width=ERASER_WIDTH,
-                        tags=('drawn')
+                        tags='drawn'
                     )
                 else:
                     self.canvas.coords(
@@ -400,9 +389,9 @@ class SurgiCue:
                 self.canvas.delete(object_to_delete)
             elif len(self.cleared_objects) > 0:
                 for cleared_object in self.cleared_objects:
-                    coords, options = cleared_object
+                    coordinates, options = cleared_object
                     options_extracted = {key: val[-1] for key, val in options.items()}
-                    new_id = self.canvas.create_line(*coords, **options_extracted)
+                    new_id = self.canvas.create_line(*coordinates, **options_extracted)
                     self.drawn_object_ids.append(new_id)
                 self.cleared_objects.clear()
         except Exception as e:
@@ -412,15 +401,15 @@ class SurgiCue:
         try:
             self.cleared_objects.clear()
             for object_id in self.drawn_object_ids:
-                coords = self.canvas.coords(object_id)
+                coordinates = self.canvas.coords(object_id)
                 options = self.canvas.itemconfig(object_id)
-                self.cleared_objects.append((coords, options))
+                self.cleared_objects.append((coordinates, options))
                 self.canvas.delete(object_id)
             self.drawn_object_ids.clear()
         except Exception as e:
             self.start_failsafe_mode('Error during canvas clearing', e)
 
-    def draw_tool_preview(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
+    def display_tool_preview(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
         try:
             half = line_width // 2
             self.canvas.create_rectangle(x - half, y - half, x + half, y + half,
@@ -429,45 +418,37 @@ class SurgiCue:
         except Exception as e:
             self.start_failsafe_mode('Error drawing tool preview', e)
 
-    def draw_crosshair(self, x: int, y: int):
+    def display_crosshair(self, x: int, y: int):
         try:
             half = POINTER_SIZE // 2
-            self.canvas.create_line(x - half, y, x + half, y, fill=COLOR, width=UI_LINE_WIDTH,
+            self.canvas.create_line(x - half, y, x + half, y, fill=DRAWING_COLOR, width=UI_LINE_WIDTH,
                                     tags=('overlay', 'pointer'))
-            self.canvas.create_line(x, y - half, x, y + half, fill=COLOR, width=UI_LINE_WIDTH,
+            self.canvas.create_line(x, y - half, x, y + half, fill=DRAWING_COLOR, width=UI_LINE_WIDTH,
                                     tags=('overlay', 'pointer'))
         except Exception as e:
             self.start_failsafe_mode('Error drawing crosshair', e)
 
-    def loop(self):
-        if not self.failsafe_mode:
-            self.perform_state_actions()
-            self.root.after(1000 // FPS, self.loop)
-
-    def run(self):
-        self.root.mainloop()
-
     def display_icon(self, filename: str):
         try:
             icon_position = (10, 10)
-            if ((get_current_time() - self.last_action_icon_time > ICON_DURATION)):
+            if get_current_time() - self.last_action_icon_time >= ICON_DURATION:
                 self.canvas.delete('icon')
                 self.last_action_icon_time = 0
 
-            if (filename == ''):
+            if filename == '':
                 return
             try:
                 icon = self.load_icon(filename)
                 self.canvas.delete('icon')
-                self.canvas.create_image(icon_position, anchor="nw", image=icon, tags=('icon'))
+                self.canvas.create_image(icon_position, anchor="nw", image=icon, tags='icon')
 
             except Exception as e:
                 logging.warning(f'Error loading Icon ({filename}), using text as fallback. {e}')
 
-                toolname = filename.split(".")[0]
+                tool_name = filename.split(".")[0]
                 self.canvas.delete('icon')
-                self.canvas.create_text(icon_position, anchor="nw", text=toolname, fill=ICON_TINT,
-                                        font=("Arial", ICON_SIZE // 5, "bold"), tags=('icon'))
+                self.canvas.create_text(icon_position, anchor="nw", text=tool_name, fill=ICON_TINT,
+                                        font=("Arial", ICON_SIZE // 5, "bold"), tags='icon')
 
         except Exception as e:
             self.start_failsafe_mode('Error displaying icon', e)
@@ -487,21 +468,13 @@ class SurgiCue:
         self.icon_cache[filename] = photo_image
         return photo_image
 
-    def start_failsafe_mode(self, message: str, exception: Exception):
-        logging.critical('Entering failsafe mode due to error: %s', message)
-        logging.exception(exception)
-        self.canvas.delete('all')
-        self.failsafe_mode = True
-        try:
-            self.canvas.create_text(10, 10, anchor="nw", text='FAILSAFE MODE', fill=ICON_TINT,
-                                    font=("Arial", ICON_SIZE // 5, "bold"), tags=('icon'))
-            self.canvas.unbind('<ButtonPress-1>')
-            self.canvas.unbind('<ButtonRelease-1>')
-            self.canvas.unbind('<ButtonPress-3>')
-            self.canvas.unbind('<ButtonRelease-3>')
-            self.canvas.bind('<Motion>')
-        except Exception as e:
-            logging.exception('Error while starting failsafe mode: %s', e)
+    def loop(self):
+        if not self.failsafe_mode:
+            self.perform_state_actions()
+            self.root.after(1000 // FPS, self.loop)
+
+    def run(self):
+        self.root.mainloop()
 
 
 if __name__ == '__main__':
