@@ -385,21 +385,24 @@ class SurgiCue:
         self.root.mainloop()
 
     def display_icon(self, filename: str):
-        # todo: fix issue when displaying undo
+        icon_position = (10, 10)
         if ((get_current_time() - self.last_action_icon_time > ICON_DURATION)):
             self.canvas.delete('icon')
             self.last_action_icon_time = 0
 
-        icon_position = (10, 10)
-
+        if (filename == ''):
+            return
         try:
+
             icon = self.load_icon(filename)
+            self.canvas.delete('icon')
             self.canvas.create_image(icon_position, anchor="nw", image=icon, tags=('icon'))
 
         except Exception as e:
 
             print(f"[WARNING] Error loading Icon ({filename}), using text as fallback: {e}")
             toolname = filename.split(".")[0]
+            self.canvas.delete('icon')
             self.canvas.create_text(icon_position, anchor="nw", text=toolname, fill=ICON_TINT,
                                     font=("Arial", ICON_SIZE // 5, "bold"), tags=('icon'))
 
