@@ -2,8 +2,8 @@ import os
 import tkinter
 import time
 from enum import Enum, auto
-
 from PIL import Image, ImageTk
+import logging
 
 FPS = 60
 
@@ -23,6 +23,13 @@ ICON_DIRECTORY = 'icons/'
 ICON_SIZE = 100
 ICON_TINT = '#FF0000'
 ICON_DURATION = 0.5
+
+logging.basicConfig(
+    level=logging.INFO,
+    filename="SugiCue.log",
+    format="{asctime} - {levelname} - {message}",
+    style="{"
+)
 
 
 def get_current_time():
@@ -46,6 +53,7 @@ class States(Enum):
     LINE = auto()
     UNDO = auto()
     CLEAR = auto()
+    FAILSAFE = auto()
 
 
 class SurgiCue:
@@ -59,7 +67,7 @@ class SurgiCue:
             self._win_icon = tkinter.PhotoImage(file=icon_path)
             self.root.iconphoto(True, self._win_icon)
         except Exception as e:
-            print(f"[WARNING] Icon not found ({icon_path}): {e}")
+            logging.warning(f"Icon not found ({icon_path}): {e}")
 
         self.w = self.root.winfo_screenwidth()
         self.h = self.root.winfo_screenheight()
@@ -93,13 +101,12 @@ class SurgiCue:
         self.root.bind('<Escape>', lambda e: self.root.destroy())
         self.canvas.bind('<ButtonPress-1>', self.handle_clicks('left_pressed'))
         self.canvas.bind('<ButtonRelease-1>', self.handle_clicks('left_released'))
-        # self.canvas.bind('<Double-Button-1>', self.handle_clicks('left_double'))
         self.canvas.bind('<ButtonPress-3>', self.handle_clicks('right_pressed'))
         self.canvas.bind('<ButtonRelease-3>', self.handle_clicks('right_released'))
-        # self.canvas.bind('<Double-Button-3>', self.handle_clicks('right_double'))
         self.canvas.bind('<Motion>', self.handle_motion())
 
         self.state = States.POINTER
+        self.failsafe_mode = False
 
         self.loop()
 
@@ -107,42 +114,45 @@ class SurgiCue:
         def handler(event):
             x, y = event.x, event.y
             current_time = get_current_time()
+            try:
+                match event_type:
+                    case 'left_pressed':
 
-            match event_type:
-                case 'left_pressed':
+                        self.last_left_click_time = current_time
 
-                    self.last_left_click_time = current_time
+                    case 'left_released':
 
-                case 'left_released':
-
-                    if current_time - self.last_left_release_time < DOUBLE_CLICK_THRESHOLD:
-                        self.latest_click = ClickType.LEFT_DOUBLE
+                        if current_time - self.last_left_release_time < DOUBLE_CLICK_THRESHOLD:
+                            self.latest_click = ClickType.LEFT_DOUBLE
 
 
-                    elif current_time - self.last_left_click_time < LONG_PRESS_DURATION:
-                        self.last_left_release_time = current_time
-                        self.latest_click = ClickType.LEFT_SINGLE
+                        elif current_time - self.last_left_click_time < LONG_PRESS_DURATION:
+                            self.last_left_release_time = current_time
+                            self.latest_click = ClickType.LEFT_SINGLE
 
-                    else:
-                        self.latest_click = ClickType.LEFT_LONG
+                        else:
+                            self.latest_click = ClickType.LEFT_LONG
 
-                case 'right_pressed':
-                    self.last_right_click_time = current_time
+                    case 'right_pressed':
+                        self.last_right_click_time = current_time
 
-                case 'right_released':
+                    case 'right_released':
 
-                    if current_time - self.last_right_release_time < DOUBLE_CLICK_THRESHOLD:
-                        self.latest_click = ClickType.RIGHT_DOUBLE
+                        if current_time - self.last_right_release_time < DOUBLE_CLICK_THRESHOLD:
+                            self.latest_click = ClickType.RIGHT_DOUBLE
 
-                    elif current_time - self.last_right_click_time < LONG_PRESS_DURATION:
-                        self.latest_click = ClickType.RIGHT_SINGLE
-                        self.last_right_release_time = current_time
+                        elif current_time - self.last_right_click_time < LONG_PRESS_DURATION:
+                            self.latest_click = ClickType.RIGHT_SINGLE
+                            self.last_right_release_time = current_time
 
-                    else:
-                        self.latest_click = ClickType.RIGHT_LONG
+                        else:
+                            self.latest_click = ClickType.RIGHT_LONG
 
-            self.last_click_coordinates = (x, y)
-            self.transition_states()
+                self.last_click_coordinates = (x, y)
+                self.transition_states()
+
+            except Exception as e:
+                self.start_failsafe_mode('Error handling click event', e)
 
         return handler
 
@@ -153,258 +163,314 @@ class SurgiCue:
         return handler
 
     def transition_states(self):
-        match self.state:
-            case States.POINTER:
-                match self.latest_click:
-                    case ClickType.RIGHT_SINGLE:
-                        self.state = States.DRAW
-                    case ClickType.RIGHT_DOUBLE:
-                        self.state = States.LINE
-                    case ClickType.LEFT_SINGLE:
-                        self.state = States.ERASE
-                    case ClickType.LEFT_DOUBLE:
-                        self.state = States.UNDO
-                    case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                        self.state = States.CLEAR
-                    case ClickType.NONE:
-                        pass
+        try:
+            match self.state:
+                case States.POINTER:
+                    match self.latest_click:
+                        case ClickType.RIGHT_SINGLE:
+                            self.state = States.DRAW
+                        case ClickType.RIGHT_DOUBLE:
+                            self.state = States.LINE
+                        case ClickType.LEFT_SINGLE:
+                            self.state = States.ERASE
+                        case ClickType.LEFT_DOUBLE:
+                            self.state = States.UNDO
+                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
+                            self.state = States.CLEAR
+                        case ClickType.NONE:
+                            pass
 
-            case States.DRAW:
-                match self.latest_click:
-                    case ClickType.RIGHT_SINGLE:
-                        self.state = States.POINTER
-                    case ClickType.RIGHT_DOUBLE:
-                        self.state = States.LINE
-                    case ClickType.LEFT_SINGLE:
-                        self.state = States.ERASE
-                    case ClickType.LEFT_DOUBLE:
-                        self.state = States.UNDO
-                    case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                        self.state = States.CLEAR
-                    case ClickType.NONE:
-                        pass
-            case States.ERASE:
-                match self.latest_click:
-                    case ClickType.RIGHT_SINGLE:
-                        self.state = States.DRAW
-                    case ClickType.RIGHT_DOUBLE:
-                        self.state = States.LINE
-                    case ClickType.LEFT_SINGLE:
-                        self.state = States.POINTER
-                    case ClickType.LEFT_DOUBLE:
-                        self.state = States.UNDO
-                    case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                        self.state = States.CLEAR
-                    case ClickType.NONE:
-                        pass
-            case States.LINE:
-                match self.latest_click:
-                    case ClickType.RIGHT_SINGLE:
-                        self.state = States.POINTER
-                    case ClickType.RIGHT_DOUBLE:
-                        self.state = States.LINE
-                    case ClickType.LEFT_SINGLE:
-                        self.state = States.ERASE
-                    case ClickType.LEFT_DOUBLE:
-                        self.state = States.UNDO
-                    case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                        self.state = States.CLEAR
-                    case ClickType.NONE:
-                        pass
-            case States.UNDO:
-                pass
-            case States.CLEAR:
-                pass
-            case _:
-                pass
-                # TODO:throw error
-        self.latest_click = ClickType.NONE
+                case States.DRAW:
+                    match self.latest_click:
+                        case ClickType.RIGHT_SINGLE:
+                            self.state = States.POINTER
+                        case ClickType.RIGHT_DOUBLE:
+                            self.state = States.LINE
+                        case ClickType.LEFT_SINGLE:
+                            self.state = States.ERASE
+                        case ClickType.LEFT_DOUBLE:
+                            self.state = States.UNDO
+                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
+                            self.state = States.CLEAR
+                        case ClickType.NONE:
+                            pass
+                case States.ERASE:
+                    match self.latest_click:
+                        case ClickType.RIGHT_SINGLE:
+                            self.state = States.DRAW
+                        case ClickType.RIGHT_DOUBLE:
+                            self.state = States.LINE
+                        case ClickType.LEFT_SINGLE:
+                            self.state = States.POINTER
+                        case ClickType.LEFT_DOUBLE:
+                            self.state = States.UNDO
+                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
+                            self.state = States.CLEAR
+                        case ClickType.NONE:
+                            pass
+                case States.LINE:
+                    match self.latest_click:
+                        case ClickType.RIGHT_SINGLE:
+                            self.state = States.POINTER
+                        case ClickType.RIGHT_DOUBLE:
+                            self.state = States.LINE
+                        case ClickType.LEFT_SINGLE:
+                            self.state = States.ERASE
+                        case ClickType.LEFT_DOUBLE:
+                            self.state = States.UNDO
+                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
+                            self.state = States.CLEAR
+                        case ClickType.NONE:
+                            pass
+                case States.UNDO:
+                    pass
+                case States.CLEAR:
+                    pass
+                case States.FAILSAFE:
+                    pass
+                case _:
+                    self.start_failsafe_mode('Unknown State during transition', Exception('Invalid State'))
+                    pass
+            self.latest_click = ClickType.NONE
+        except Exception as e:
+            self.start_failsafe_mode('Error during state transition', e)
 
     def perform_state_actions(self):
-        self.canvas.delete('overlay')
+        try:
+            self.canvas.delete('overlay')
 
-        icon_filename = ''
-        x, y = self.pointer_coordinates
+            icon_filename = ''
+            x, y = self.pointer_coordinates
 
-        if (self.line_end_coordinates != None):
-            # draw line
-            self.line_end_coordinates = None
+            if (self.line_end_coordinates != None):
+                # draw line
+                self.line_end_coordinates = None
 
-        match self.state:
-            case States.POINTER:
-                # icon_filename = 'pointer.png'
-                self.draw_crosshair(x, y)
-            case States.DRAW:
-                icon_filename = 'draw.png'
-                self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
-                self.draw(x, y)
+            match self.state:
+                case States.POINTER:
+                    # icon_filename = 'pointer.png'
+                    self.draw_crosshair(x, y)
+                case States.DRAW:
+                    icon_filename = 'draw.png'
+                    self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
+                    self.draw(x, y)
 
-            case States.ERASE:
-                icon_filename = 'erase.png'
-                self.draw_tool_preview(ERASER_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
-                self.erase(x, y)
+                case States.ERASE:
+                    icon_filename = 'erase.png'
+                    self.draw_tool_preview(ERASER_COLOR, COLOR, ERASER_WIDTH, UI_LINE_WIDTH, x, y)
+                    self.erase(x, y)
 
-            case States.LINE:
-                icon_filename = 'line.png'
-                self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
-                self.draw_line(x, y)
+                case States.LINE:
+                    icon_filename = 'line.png'
+                    self.draw_tool_preview(COLOR, COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, x, y)
+                    self.draw_line(x, y)
 
-            case States.UNDO:
-                self.last_action_icon_time = get_current_time()
-                icon_filename = 'undo.png'
+                case States.UNDO:
+                    self.last_action_icon_time = get_current_time()
+                    icon_filename = 'undo.png'
 
-                self.undo()
+                    self.undo()
 
-                self.state = States.POINTER
+                    self.state = States.POINTER
 
-            case States.CLEAR:
-                self.last_action_icon_time = get_current_time()
-                icon_filename = 'clear.png'
-                self.clear_canvas()
-                self.state = States.POINTER
+                case States.CLEAR:
+                    self.last_action_icon_time = get_current_time()
+                    icon_filename = 'clear.png'
+                    self.clear_canvas()
+                    self.state = States.POINTER
 
-            case _:
-                pass
+                case States.FAILSAFE:
+                    pass
+                case _:
+                    self.start_failsafe_mode('Unknown State during action performance', Exception('Invalid State'))
+                    pass
 
-        # finish drawing
-        if self.state != States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
-            if (self.current_draw_id is not None):
-                self.drawn_object_ids.append(self.current_draw_id)
-            self.draw_coordinates = []
-            self.current_draw_id = None
+            # finish drawing
+            if self.state != States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
+                if (self.current_draw_id is not None):
+                    self.drawn_object_ids.append(self.current_draw_id)
+                self.draw_coordinates = []
+                self.current_draw_id = None
 
-        # finish line
-        if self.state != States.LINE and self.current_line_id is not None:
-            self.drawn_object_ids.append(self.current_line_id)
-            self.current_line_id = None
-            self.line_start_coordinates = None
+            # finish line
+            if self.state != States.LINE and self.current_line_id is not None:
+                self.drawn_object_ids.append(self.current_line_id)
+                self.current_line_id = None
+                self.line_start_coordinates = None
 
-        # finish erasing
-        if self.state != States.ERASE and (self.current_erase_id is not None or len(self.erase_coordinates) == 1):
-            if (self.current_erase_id is not None):
-                self.drawn_object_ids.append(self.current_erase_id)
-            self.erase_coordinates = []
-            self.current_erase_id = None
+            # finish erasing
+            if self.state != States.ERASE and (self.current_erase_id is not None or len(self.erase_coordinates) == 1):
+                if (self.current_erase_id is not None):
+                    self.drawn_object_ids.append(self.current_erase_id)
+                self.erase_coordinates = []
+                self.current_erase_id = None
 
-        self.display_icon(icon_filename)
+            self.display_icon(icon_filename)
+        except Exception as e:
+            self.start_failsafe_mode('Error performing state actions', e)
 
     def draw(self, x: int, y: int):
-        coordinates_length = len(self.draw_coordinates)
-        if coordinates_length > 0:
-            previous_x, previous_y = self.draw_coordinates[-1]
-            if (previous_x, previous_y) == (x, y):
-                return
+        try:
+            coordinates_length = len(self.draw_coordinates)
+            if coordinates_length > 0:
+                previous_x, previous_y = self.draw_coordinates[-1]
+                if (previous_x, previous_y) == (x, y):
+                    return
 
-            if coordinates_length == 1:
-                self.current_draw_id = self.canvas.create_line(
-                    previous_x, previous_y, x, y,
-                    fill=COLOR,
-                    width=DRAWING_WIDTH,
-                    tags=('drawn')
-                )
-            else:
-                self.canvas.coords(
-                    self.current_draw_id,
-                    *self.canvas.coords(self.current_draw_id),
-                    x, y
-                )
-        self.draw_coordinates.append((x, y))
+                if coordinates_length == 1:
+                    self.current_draw_id = self.canvas.create_line(
+                        previous_x, previous_y, x, y,
+                        fill=COLOR,
+                        width=DRAWING_WIDTH,
+                        tags=('drawn')
+                    )
+                else:
+                    self.canvas.coords(
+                        self.current_draw_id,
+                        *self.canvas.coords(self.current_draw_id),
+                        x, y
+                    )
+            self.draw_coordinates.append((x, y))
+        except Exception as e:
+            self.start_failsafe_mode('Error during drawing', e)
 
     def draw_line(self, x, y):
-        if self.line_start_coordinates is None:
-            self.line_start_coordinates = (x, y)
-        start_x, start_y = self.line_start_coordinates
+        try:
+            if self.line_start_coordinates is None:
+                self.line_start_coordinates = (x, y)
+            start_x, start_y = self.line_start_coordinates
 
-        if (self.current_line_id is None):
-            self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=COLOR, width=LINE_WIDTH,
-                                                           capstyle='round', tags=('drawn'))
-        else:
-            self.canvas.coords(self.current_line_id, start_x, start_y, x, y)
+            if (self.current_line_id is None):
+                self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=COLOR, width=LINE_WIDTH,
+                                                               capstyle='round', tags=('drawn'))
+            else:
+                self.canvas.coords(self.current_line_id, start_x, start_y, x, y)
+        except Exception as e:
+            self.start_failsafe_mode('Error during line drawing', e)
 
     def erase(self, x: int, y: int):
-        coordinates_length = len(self.erase_coordinates)
-        if coordinates_length > 0:
-            previous_x, previous_y = self.erase_coordinates[-1]
-            if (previous_x, previous_y) == (x, y):
-                return
+        try:
+            coordinates_length = len(self.erase_coordinates)
+            if coordinates_length > 0:
+                previous_x, previous_y = self.erase_coordinates[-1]
+                if (previous_x, previous_y) == (x, y):
+                    return
 
-            if coordinates_length == 1:
-                self.current_erase_id = self.canvas.create_line(
-                    previous_x, previous_y, x, y,
-                    fill=ERASER_COLOR,
-                    width=ERASER_WIDTH,
-                    tags=('drawn')
-                )
-            else:
-                self.canvas.coords(
-                    self.current_erase_id,
-                    *self.canvas.coords(self.current_erase_id),
-                    x, y
-                )
-        self.erase_coordinates.append((x, y))
+                if coordinates_length == 1:
+                    self.current_erase_id = self.canvas.create_line(
+                        previous_x, previous_y, x, y,
+                        fill=ERASER_COLOR,
+                        width=ERASER_WIDTH,
+                        tags=('drawn')
+                    )
+                else:
+                    self.canvas.coords(
+                        self.current_erase_id,
+                        *self.canvas.coords(self.current_erase_id),
+                        x, y
+                    )
+            self.erase_coordinates.append((x, y))
+            coordinates_length = len(self.erase_coordinates)
+            if coordinates_length > 0:
+                previous_x, previous_y = self.erase_coordinates[-1]
+                if (previous_x, previous_y) == (x, y):
+                    return
+
+                if coordinates_length == 1:
+                    self.current_erase_id = self.canvas.create_line(
+                        previous_x, previous_y, x, y,
+                        fill=ERASER_COLOR,
+                        width=ERASER_WIDTH,
+                        tags=('drawn')
+                    )
+                else:
+                    self.canvas.coords(
+                        self.current_erase_id,
+                        *self.canvas.coords(self.current_erase_id),
+                        x, y
+                    )
+            self.erase_coordinates.append((x, y))
+        except Exception as e:
+            self.start_failsafe_mode('Error during erasing', e)
 
     def undo(self):
-        if len(self.drawn_object_ids) > 0:
-            object_to_delete = self.drawn_object_ids.pop()
-            self.canvas.delete(object_to_delete)
-        elif len(self.cleared_objects) > 0:
-            for cleared_object in self.cleared_objects:
-                coords, options = cleared_object
-                options_extracted = {key: val[-1] for key, val in options.items()}
-                new_id = self.canvas.create_line(*coords, **options_extracted)
-                self.drawn_object_ids.append(new_id)
-            self.cleared_objects.clear()
+        try:
+            if len(self.drawn_object_ids) > 0:
+                object_to_delete = self.drawn_object_ids.pop()
+                self.canvas.delete(object_to_delete)
+            elif len(self.cleared_objects) > 0:
+                for cleared_object in self.cleared_objects:
+                    coords, options = cleared_object
+                    options_extracted = {key: val[-1] for key, val in options.items()}
+                    new_id = self.canvas.create_line(*coords, **options_extracted)
+                    self.drawn_object_ids.append(new_id)
+                self.cleared_objects.clear()
+        except Exception as e:
+            self.start_failsafe_mode('Error during undo', e)
 
     def clear_canvas(self):
-        self.cleared_objects.clear()
-        for object_id in self.drawn_object_ids:
-            coords = self.canvas.coords(object_id)
-            options = self.canvas.itemconfig(object_id)
-            self.cleared_objects.append((coords, options))
-            self.canvas.delete(object_id)
-        self.drawn_object_ids.clear()
+        try:
+            self.cleared_objects.clear()
+            for object_id in self.drawn_object_ids:
+                coords = self.canvas.coords(object_id)
+                options = self.canvas.itemconfig(object_id)
+                self.cleared_objects.append((coords, options))
+                self.canvas.delete(object_id)
+            self.drawn_object_ids.clear()
+        except Exception as e:
+            self.start_failsafe_mode('Error during canvas clearing', e)
 
     def draw_tool_preview(self, color: str, outline_color: str, line_width: int, border_width: int, x: int, y: int):
-        half = line_width // 2
-        self.canvas.create_rectangle(x - half, y - half, x + half, y + half,
-                                     fill=color, outline=outline_color, width=border_width,
-                                     tags=('overlay', 'pointer'))
+        try:
+            half = line_width // 2
+            self.canvas.create_rectangle(x - half, y - half, x + half, y + half,
+                                         fill=color, outline=outline_color, width=border_width,
+                                         tags=('overlay', 'pointer'))
+        except Exception as e:
+            self.start_failsafe_mode('Error drawing tool preview', e)
 
     def draw_crosshair(self, x: int, y: int):
-        half = POINTER_SIZE // 2
-        self.canvas.create_line(x - half, y, x + half, y, fill=COLOR, width=UI_LINE_WIDTH,
-                                tags=('overlay', 'pointer'))
-        self.canvas.create_line(x, y - half, x, y + half, fill=COLOR, width=UI_LINE_WIDTH,
-                                tags=('overlay', 'pointer'))
+        try:
+            half = POINTER_SIZE // 2
+            self.canvas.create_line(x - half, y, x + half, y, fill=COLOR, width=UI_LINE_WIDTH,
+                                    tags=('overlay', 'pointer'))
+            self.canvas.create_line(x, y - half, x, y + half, fill=COLOR, width=UI_LINE_WIDTH,
+                                    tags=('overlay', 'pointer'))
+        except Exception as e:
+            self.start_failsafe_mode('Error drawing crosshair', e)
 
     def loop(self):
-        self.perform_state_actions()
-        self.root.after(1000 // FPS, self.loop)
+        if not self.failsafe_mode:
+            self.perform_state_actions()
+            self.root.after(1000 // FPS, self.loop)
 
     def run(self):
         self.root.mainloop()
 
     def display_icon(self, filename: str):
-        icon_position = (10, 10)
-        if ((get_current_time() - self.last_action_icon_time > ICON_DURATION)):
-            self.canvas.delete('icon')
-            self.last_action_icon_time = 0
-
-        if (filename == ''):
-            return
         try:
+            icon_position = (10, 10)
+            if ((get_current_time() - self.last_action_icon_time > ICON_DURATION)):
+                self.canvas.delete('icon')
+                self.last_action_icon_time = 0
 
-            icon = self.load_icon(filename)
-            self.canvas.delete('icon')
-            self.canvas.create_image(icon_position, anchor="nw", image=icon, tags=('icon'))
+            if (filename == ''):
+                return
+            try:
+                icon = self.load_icon(filename)
+                self.canvas.delete('icon')
+                self.canvas.create_image(icon_position, anchor="nw", image=icon, tags=('icon'))
+
+            except Exception as e:
+                logging.warning(f'Error loading Icon ({filename}), using text as fallback. {e}')
+
+                toolname = filename.split(".")[0]
+                self.canvas.delete('icon')
+                self.canvas.create_text(icon_position, anchor="nw", text=toolname, fill=ICON_TINT,
+                                        font=("Arial", ICON_SIZE // 5, "bold"), tags=('icon'))
 
         except Exception as e:
-
-            print(f"[WARNING] Error loading Icon ({filename}), using text as fallback: {e}")
-            toolname = filename.split(".")[0]
-            self.canvas.delete('icon')
-            self.canvas.create_text(icon_position, anchor="nw", text=toolname, fill=ICON_TINT,
-                                    font=("Arial", ICON_SIZE // 5, "bold"), tags=('icon'))
+            self.start_failsafe_mode('Error displaying icon', e)
 
     def load_icon(self, filename):
         if filename in self.icon_cache:
@@ -420,6 +486,22 @@ class SurgiCue:
         photo_image = ImageTk.PhotoImage(tinted_icon)
         self.icon_cache[filename] = photo_image
         return photo_image
+
+    def start_failsafe_mode(self, message: str, exception: Exception):
+        logging.critical('Entering failsafe mode due to error: %s', message)
+        logging.exception(exception)
+        self.canvas.delete('all')
+        self.failsafe_mode = True
+        try:
+            self.canvas.create_text(10, 10, anchor="nw", text='FAILSAFE MODE', fill=ICON_TINT,
+                                    font=("Arial", ICON_SIZE // 5, "bold"), tags=('icon'))
+            self.canvas.unbind('<ButtonPress-1>')
+            self.canvas.unbind('<ButtonRelease-1>')
+            self.canvas.unbind('<ButtonPress-3>')
+            self.canvas.unbind('<ButtonRelease-3>')
+            self.canvas.bind('<Motion>')
+        except Exception as e:
+            logging.exception('Error while starting failsafe mode: %s', e)
 
 
 if __name__ == '__main__':
