@@ -14,7 +14,7 @@ logging.basicConfig(
 
 FPS = 60
 
-BACKGROUND_COLOR = '#FFFFFF'  # TODO: change to #FFFFFF
+BACKGROUND_COLOR = '#FFFFFF'
 DRAWING_COLOR = '#00FF00'
 ERASER_COLOR = BACKGROUND_COLOR
 LONG_PRESS_DURATION = 0.5
@@ -257,7 +257,6 @@ class SurgiCue:
 
             match self.state:
                 case States.POINTER:
-                    # icon_filename = 'pointer.png'
                     self.display_crosshair(pointer_x, pointer_y)
                 case States.DRAW:
                     icon_filename = 'draw.png'
