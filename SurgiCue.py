@@ -1,58 +1,24 @@
+#!/usr/bin/env python3
+
 import os
 import tkinter
 import time
 from enum import Enum, auto
 from PIL import Image, ImageTk
 import logging
+import constants as const
+import statemachine as sm
 
 logging.basicConfig(
     level=logging.INFO,
-    filename="SurgiCue.log",
+    filename="logs/SurgiCue.log",
     format="{asctime} - {levelname} - {message}",
     style="{"
 )
 
-FPS = 60
-
-BACKGROUND_COLOR = '#FFFFFF'
-DRAWING_COLOR = '#00FF00'
-ERASER_COLOR = BACKGROUND_COLOR
-LONG_PRESS_DURATION = 0.5
-DOUBLE_CLICK_THRESHOLD = 0.2
-
-POINTER_SIZE = 50
-UI_LINE_WIDTH = POINTER_SIZE/10
-DRAWING_WIDTH = POINTER_SIZE/5
-ERASER_WIDTH = POINTER_SIZE*2
-LINE_WIDTH = DRAWING_WIDTH
-
-ICON_DIRECTORY = 'icons/'
-ICON_SIZE = 150
-ICON_TINT = DRAWING_COLOR
-ICON_DURATION = 0.5
 
 def get_current_time():
     return time.perf_counter()
-
-
-class ClickType(Enum):
-    NONE = auto()
-    LEFT_SINGLE = auto()
-    LEFT_DOUBLE = auto()
-    LEFT_LONG = auto()
-    RIGHT_SINGLE = auto()
-    RIGHT_DOUBLE = auto()
-    RIGHT_LONG = auto()
-
-
-class States(Enum):
-    POINTER = auto()
-    DRAW = auto()
-    ERASE = auto()
-    LINE = auto()
-    UNDO = auto()
-    CLEAR = auto()
-    FAILSAFE = auto()
 
 
 class SurgiCue:
@@ -61,7 +27,7 @@ class SurgiCue:
         self.root.title('SurgiCue')
         self.root.attributes('-fullscreen', True)
         self.root.config(cursor="none")
-        icon_path = os.path.join(ICON_DIRECTORY, 'window-icon.png')
+        icon_path = os.path.join(const.ICON_DIRECTORY, 'window-icon.png')
         try:
             self._win_icon = tkinter.PhotoImage(file=icon_path)
             self.root.iconphoto(True, self._win_icon)
@@ -70,7 +36,8 @@ class SurgiCue:
 
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
-        self.canvas = tkinter.Canvas(self.root, width=self.screen_width, height=self.screen_height, bg=BACKGROUND_COLOR,
+        self.canvas = tkinter.Canvas(self.root, width=self.screen_width, height=self.screen_height,
+                                     bg=const.BACKGROUND_COLOR,
                                      highlightthickness=0)
         self.canvas.pack(fill='both', expand=True)
 
@@ -85,24 +52,24 @@ class SurgiCue:
         self.last_left_release_time = 0
         self.last_right_click_time = 0
         self.last_right_release_time = 0
-        self.latest_click = ClickType.NONE
+        self.latest_click = sm.ClickType.NONE
         self.last_click_coordinates = (0, 0)
         self.pointer_coordinates = (0, 0)
 
-        self.drawn_object_ids = []
-        self.line_start_coordinates = None
         self.draw_coordinates = []
         self.erase_coordinates = []
+        self.line_start_coordinates = None
+
         self.current_draw_id = None
         self.current_erase_id = None
         self.current_line_id = None
-
+        self.drawn_object_ids = []
         self.cleared_objects = []
 
         self.last_action_icon_time = 0
         self.icon_cache = {}
 
-        self.state = States.POINTER
+        self.state = sm.States.POINTER
         self.failsafe_mode = False
 
         self.loop()
@@ -119,34 +86,34 @@ class SurgiCue:
 
                     case 'left_released':
 
-                        if current_time - self.last_left_release_time < DOUBLE_CLICK_THRESHOLD:
-                            self.latest_click = ClickType.LEFT_DOUBLE
+                        if current_time - self.last_left_release_time < const.DOUBLE_CLICK_THRESHOLD:
+                            self.latest_click = sm.ClickType.LEFT_DOUBLE
 
 
-                        elif current_time - self.last_left_click_time < LONG_PRESS_DURATION:
+                        elif current_time - self.last_left_click_time < const.LONG_PRESS_DURATION:
                             self.last_left_release_time = current_time
-                            self.latest_click = ClickType.LEFT_SINGLE
+                            self.latest_click = sm.ClickType.LEFT_SINGLE
 
                         else:
-                            self.latest_click = ClickType.LEFT_LONG
+                            self.latest_click = sm.ClickType.LEFT_LONG
 
                     case 'right_pressed':
                         self.last_right_click_time = current_time
 
                     case 'right_released':
 
-                        if current_time - self.last_right_release_time < DOUBLE_CLICK_THRESHOLD:
-                            self.latest_click = ClickType.RIGHT_DOUBLE
+                        if current_time - self.last_right_release_time < const.DOUBLE_CLICK_THRESHOLD:
+                            self.latest_click = sm.ClickType.RIGHT_DOUBLE
 
-                        elif current_time - self.last_right_click_time < LONG_PRESS_DURATION:
+                        elif current_time - self.last_right_click_time < const.LONG_PRESS_DURATION:
                             self.last_right_release_time = current_time
-                            self.latest_click = ClickType.RIGHT_SINGLE
+                            self.latest_click = sm.ClickType.RIGHT_SINGLE
 
                         else:
-                            self.latest_click = ClickType.RIGHT_LONG
+                            self.latest_click = sm.ClickType.RIGHT_LONG
 
                 self.last_click_coordinates = (x, y)
-                self.transition_states()
+                sm.transition_states(self)
 
             except Exception as e:
                 self.start_failsafe_mode('Error handling click event', e)
@@ -159,78 +126,7 @@ class SurgiCue:
 
         return handler
 
-    def transition_states(self):
-        try:
-            match self.state:
-                case States.POINTER:
-                    match self.latest_click:
-                        case ClickType.RIGHT_SINGLE:
-                            self.state = States.DRAW
-                        case ClickType.RIGHT_DOUBLE:
-                            self.state = States.LINE
-                        case ClickType.LEFT_SINGLE:
-                            self.state = States.ERASE
-                        case ClickType.LEFT_DOUBLE:
-                            self.state = States.UNDO
-                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                            self.state = States.CLEAR
-                        case ClickType.NONE:
-                            pass
 
-                case States.DRAW:
-                    match self.latest_click:
-                        case ClickType.RIGHT_SINGLE:
-                            self.state = States.POINTER
-                        case ClickType.RIGHT_DOUBLE:
-                            self.state = States.LINE
-                        case ClickType.LEFT_SINGLE:
-                            self.state = States.ERASE
-                        case ClickType.LEFT_DOUBLE:
-                            self.state = States.UNDO
-                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                            self.state = States.CLEAR
-                        case ClickType.NONE:
-                            pass
-                case States.ERASE:
-                    match self.latest_click:
-                        case ClickType.RIGHT_SINGLE:
-                            self.state = States.DRAW
-                        case ClickType.RIGHT_DOUBLE:
-                            self.state = States.LINE
-                        case ClickType.LEFT_SINGLE:
-                            self.state = States.POINTER
-                        case ClickType.LEFT_DOUBLE:
-                            self.state = States.UNDO
-                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                            self.state = States.CLEAR
-                        case ClickType.NONE:
-                            pass
-                case States.LINE:
-                    match self.latest_click:
-                        case ClickType.RIGHT_SINGLE:
-                            self.state = States.POINTER
-                        case ClickType.RIGHT_DOUBLE:
-                            self.state = States.LINE
-                        case ClickType.LEFT_SINGLE:
-                            self.state = States.ERASE
-                        case ClickType.LEFT_DOUBLE:
-                            self.state = States.UNDO
-                        case ClickType.LEFT_LONG | ClickType.RIGHT_LONG:
-                            self.state = States.CLEAR
-                        case ClickType.NONE:
-                            pass
-                case States.UNDO:
-                    pass
-                case States.CLEAR:
-                    pass
-                case States.FAILSAFE:
-                    pass
-                case _:
-                    self.start_failsafe_mode('Unknown State during transition', ValueError('Invalid State'))
-                    pass
-            self.latest_click = ClickType.NONE
-        except Exception as e:
-            self.start_failsafe_mode('Error during state transition', e)
 
     def start_failsafe_mode(self, message: str, exception: Exception):
         logging.critical('Entering failsafe mode due to error: %s', message)
@@ -238,8 +134,8 @@ class SurgiCue:
         self.canvas.delete('all')
         self.failsafe_mode = True
         try:
-            self.canvas.create_text(10, 10, anchor="nw", text='FAILSAFE MODE', fill=ICON_TINT,
-                                    font=("Arial", ICON_SIZE // 5, "bold"), tags='icon')
+            self.canvas.create_text(10, 10, anchor="nw", text='FAILSAFE MODE', fill=const.ICON_TINT,
+                                    font=("Arial", const.ICON_SIZE // 5, "bold"), tags='icon')
             self.canvas.unbind('<ButtonPress-1>')
             self.canvas.unbind('<ButtonRelease-1>')
             self.canvas.unbind('<ButtonPress-3>')
@@ -256,58 +152,64 @@ class SurgiCue:
             pointer_x, pointer_y = self.pointer_coordinates
 
             match self.state:
-                case States.POINTER:
+                case sm.States.POINTER:
                     self.display_crosshair(pointer_x, pointer_y)
-                case States.DRAW:
+                case sm.States.DRAW:
                     icon_filename = 'draw.png'
-                    self.display_tool_preview(DRAWING_COLOR, DRAWING_COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, pointer_x, pointer_y)
+                    self.display_tool_preview(const.DRAWING_COLOR, const.DRAWING_COLOR, const.DRAWING_WIDTH,
+                                              const.UI_LINE_WIDTH, pointer_x,
+                                              pointer_y)
                     self.draw(pointer_x, pointer_y)
 
-                case States.ERASE:
+                case sm.States.ERASE:
                     icon_filename = 'erase.png'
-                    self.display_tool_preview(ERASER_COLOR, DRAWING_COLOR, ERASER_WIDTH, UI_LINE_WIDTH, pointer_x, pointer_y)
+                    self.display_tool_preview(const.ERASER_COLOR, const.DRAWING_COLOR, const.ERASER_WIDTH,
+                                              const.UI_LINE_WIDTH, pointer_x,
+                                              pointer_y)
                     self.erase(pointer_x, pointer_y)
 
-                case States.LINE:
+                case sm.States.LINE:
                     icon_filename = 'line.png'
-                    self.display_tool_preview(DRAWING_COLOR, DRAWING_COLOR, DRAWING_WIDTH, UI_LINE_WIDTH, pointer_x, pointer_y)
+                    self.display_tool_preview(const.DRAWING_COLOR, const.DRAWING_COLOR, const.DRAWING_WIDTH,
+                                              const.UI_LINE_WIDTH, pointer_x,
+                                              pointer_y)
                     self.draw_line(pointer_x, pointer_y)
 
-                case States.UNDO:
+                case sm.States.UNDO:
                     self.last_action_icon_time = get_current_time()
                     icon_filename = 'undo.png'
 
                     self.undo()
 
-                    self.state = States.POINTER
+                    self.state = sm.States.POINTER
 
-                case States.CLEAR:
+                case sm.States.CLEAR:
                     self.last_action_icon_time = get_current_time()
                     icon_filename = 'clear.png'
                     self.clear_canvas()
-                    self.state = States.POINTER
+                    self.state = sm.States.POINTER
 
-                case States.FAILSAFE:
+                case sm.States.FAILSAFE:
                     pass
                 case _:
                     self.start_failsafe_mode('Unknown State during action performance', Exception('Invalid State'))
                     pass
 
             # finish drawing
-            if self.state != States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
+            if self.state != sm.States.DRAW and (self.current_draw_id is not None or len(self.draw_coordinates) == 1):
                 if self.current_draw_id is not None:
                     self.drawn_object_ids.append(self.current_draw_id)
                 self.draw_coordinates = []
                 self.current_draw_id = None
 
             # finish line
-            if self.state != States.LINE and self.current_line_id is not None:
+            if self.state != sm.States.LINE and self.current_line_id is not None:
                 self.drawn_object_ids.append(self.current_line_id)
                 self.current_line_id = None
                 self.line_start_coordinates = None
 
             # finish erasing
-            if self.state != States.ERASE and (self.current_erase_id is not None or len(self.erase_coordinates) == 1):
+            if self.state != sm.States.ERASE and (self.current_erase_id is not None or len(self.erase_coordinates) == 1):
                 if self.current_erase_id is not None:
                     self.drawn_object_ids.append(self.current_erase_id)
                 self.erase_coordinates = []
@@ -328,8 +230,8 @@ class SurgiCue:
                 if coordinates_length == 1:
                     self.current_draw_id = self.canvas.create_line(
                         previous_x, previous_y, x, y,
-                        fill=DRAWING_COLOR,
-                        width=DRAWING_WIDTH,
+                        fill=const.DRAWING_COLOR,
+                        width=const.DRAWING_WIDTH,
                         tags='drawn'
                     )
                 else:
@@ -349,7 +251,8 @@ class SurgiCue:
             start_x, start_y = self.line_start_coordinates
 
             if self.current_line_id is None:
-                self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=DRAWING_COLOR, width=LINE_WIDTH,
+                self.current_line_id = self.canvas.create_line(start_x, start_y, x, y, fill=const.DRAWING_COLOR,
+                                                               width=const.LINE_WIDTH,
                                                                capstyle='round', tags='drawn')
             else:
                 self.canvas.coords(self.current_line_id, start_x, start_y, x, y)
@@ -367,8 +270,8 @@ class SurgiCue:
                 if coordinates_length == 1:
                     self.current_erase_id = self.canvas.create_line(
                         previous_x, previous_y, x, y,
-                        fill=ERASER_COLOR,
-                        width=ERASER_WIDTH,
+                        fill=const.ERASER_COLOR,
+                        width=const.ERASER_WIDTH,
                         tags='drawn'
                     )
                 else:
@@ -419,10 +322,10 @@ class SurgiCue:
 
     def display_crosshair(self, x: int, y: int):
         try:
-            half = POINTER_SIZE // 2
-            self.canvas.create_line(x - half, y, x + half, y, fill=DRAWING_COLOR, width=UI_LINE_WIDTH,
+            half = const.POINTER_SIZE // 2
+            self.canvas.create_line(x - half, y, x + half, y, fill=const.DRAWING_COLOR, width=const.UI_LINE_WIDTH,
                                     tags=('overlay', 'pointer'))
-            self.canvas.create_line(x, y - half, x, y + half, fill=DRAWING_COLOR, width=UI_LINE_WIDTH,
+            self.canvas.create_line(x, y - half, x, y + half, fill=const.DRAWING_COLOR, width=const.UI_LINE_WIDTH,
                                     tags=('overlay', 'pointer'))
         except Exception as e:
             self.start_failsafe_mode('Error drawing crosshair', e)
@@ -430,7 +333,7 @@ class SurgiCue:
     def display_icon(self, filename: str):
         try:
             icon_position = (10, 10)
-            if get_current_time() - self.last_action_icon_time >= ICON_DURATION:
+            if get_current_time() - self.last_action_icon_time >= const.ICON_DURATION:
                 self.canvas.delete('icon')
                 self.last_action_icon_time = 0
 
@@ -446,8 +349,8 @@ class SurgiCue:
 
                 tool_name = filename.split(".")[0]
                 self.canvas.delete('icon')
-                self.canvas.create_text(icon_position, anchor="nw", text=tool_name, fill=ICON_TINT,
-                                        font=("Arial", ICON_SIZE // 5, "bold"), tags='icon')
+                self.canvas.create_text(icon_position, anchor="nw", text=tool_name, fill=const.ICON_TINT,
+                                        font=("Arial", const.ICON_SIZE // 5, "bold"), tags='icon')
 
         except Exception as e:
             self.start_failsafe_mode('Error displaying icon', e)
@@ -456,11 +359,11 @@ class SurgiCue:
         if filename in self.icon_cache:
             return self.icon_cache[filename]
 
-        icon_path = os.path.join(ICON_DIRECTORY, filename)
+        icon_path = os.path.join(const.ICON_DIRECTORY, filename)
         icon = Image.open(icon_path).convert("RGBA")
-        resized_icon = icon.resize((ICON_SIZE, ICON_SIZE))
+        resized_icon = icon.resize((const.ICON_SIZE, const.ICON_SIZE))
         alpha_channel = resized_icon.getchannel('A')
-        tinted_icon = Image.new("RGBA", resized_icon.size, ICON_TINT)
+        tinted_icon = Image.new("RGBA", resized_icon.size, const.ICON_TINT)
         tinted_icon.putalpha(alpha_channel)
 
         photo_image = ImageTk.PhotoImage(tinted_icon)
@@ -470,7 +373,7 @@ class SurgiCue:
     def loop(self):
         if not self.failsafe_mode:
             self.perform_state_actions()
-            self.root.after(1000 // FPS, self.loop)
+            self.root.after(1000 // const.FPS, self.loop)
 
     def run(self):
         self.root.mainloop()
