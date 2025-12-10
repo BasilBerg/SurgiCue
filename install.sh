@@ -26,10 +26,10 @@ PYFILE="$SCRIPT_DIR/$PYFILE_NAME"
 
 # create .xinitrc
 echo "#!/bin/sh" > "$USER_HOME/.xinitrc"
-echo "python3 \"$PYFILE\"" >> "$USER_HOME/.xinitrc"
+echo "cd \"$SCRIPT_DIR\" || exit 1" >> "$USER_HOME/.xinitrc"
+echo "python3 \"$PYFILE_NAME\"" >> "$USER_HOME/.xinitrc"
 chmod +x "$USER_HOME/.xinitrc"
 chown $TARGET_USER:$TARGET_USER "$USER_HOME/.xinitrc"
-echo ".xinitrc für $TARGET_USER erstellt."
 
 #create service
 SERVICE_NAME="surgicue.service"
@@ -42,14 +42,15 @@ After=systemd-user-sessions.service
 
 [Service]
 User=$TARGET_USER
-WorkingDirectory=$USER_HOME
+WorkingDirectory=$SCRIPT_DIR
 ExecStart=/usr/bin/startx
 Restart=always
-Environment=DISPLAY=:0
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
