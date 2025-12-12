@@ -5,54 +5,61 @@ if [ "$(id -u)" != "0" ]; then
     exit 1
 fi
 
-#get username
-read -p "Enter the user that will run the SurgiCue service:" TARGET_USER
-if ! id "$TARGET_USER" >/dev/null 2>&1; then
-    echo "User $TARGET_USER does not exist"
-    exit 1
-fi
-
-
-USER_HOME=$(eval echo "~$TARGET_USER")
+TARGET_USER="surgicue"
+USER_HOME="/home/$TARGET_USER"
 PYFILE_NAME="SurgiCue.py"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+INSTALL_DIR="/usr/local/share/surgicue"
+
+#create user
+if ! id "$TARGET_USER" >/dev/null 2>&1; then
+    adduser --disabled-password --gecos "" "$TARGET_USER"
+    echo "created user $TARGET_USER"
+else
+    echo "user $TARGET_USER already exists"
+fi
+deluser "$TARGET_USER" sudo >/dev/null
 
 #install dependencies
 apt update
 apt upgrade -y
 apt install -y python3 python3-tk python3-pil python3-pil.imagetk xserver-xorg-core xinit openbox
 
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-PYFILE="$SCRIPT_DIR/$PYFILE_NAME"
+mkdir -p "$INSTALL_DIR"
+cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR"/
 
-# create .xinitrc
-echo "#!/bin/sh" > "$USER_HOME/.xinitrc"
-echo "cd \"$SCRIPT_DIR\" || exit 1" >> "$USER_HOME/.xinitrc"
-echo "python3 \"$PYFILE_NAME\"" >> "$USER_HOME/.xinitrc"
+#log directory
+mkdir -p /var/log/surgicue
+chown $TARGET_USER:$TARGET_USER /var/log/surgicue
+
+# .xinitrc
+cat > "$USER_HOME/.xinitrc" <<EOF
+#!/bin/sh
+cd "$INSTALL_DIR" || exit 1
+python3 "$PYFILE_NAME"
+EOF
 chmod +x "$USER_HOME/.xinitrc"
 chown $TARGET_USER:$TARGET_USER "$USER_HOME/.xinitrc"
 
-#create service
-SERVICE_NAME="surgicue.service"
-SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME"
-
-cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=Start X automatically for $TARGET_USER
-After=systemd-user-sessions.service
-
+# auto login
+AUTOLOGIN_DIR="/etc/systemd/system/getty@tty1.service.d"
+mkdir -p "$AUTOLOGIN_DIR"
+cat > "$AUTOLOGIN_DIR/override.conf" <<EOF
 [Service]
-User=$TARGET_USER
-WorkingDirectory=$SCRIPT_DIR
-ExecStart=/usr/bin/startx
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $TARGET_USER --noclear %I \$TERM
 EOF
 
+# startx when user logs in
+PROFILE_FILE="$USER_HOME/.profile"
+grep -qxF '# Auto-start X11' "$PROFILE_FILE" 2>/dev/null || {
+    echo "" >> "$PROFILE_FILE"
+    echo "# Auto-start X11" >> "$PROFILE_FILE"
+    echo 'if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then' >> "$PROFILE_FILE"
+    echo "    startx" >> "$PROFILE_FILE"
+    echo "fi" >> "$PROFILE_FILE"
+    chown $TARGET_USER:$TARGET_USER "$PROFILE_FILE"
+}
 
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
-
+systemctl daemon-reexec
+systemctl restart getty@tty1
