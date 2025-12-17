@@ -11,7 +11,7 @@ import statemachine as sm
 
 logging.basicConfig(
     level=logging.INFO,
-    filename="logs/SurgiCue.log",
+    filename="/var/log/surgicue/surgicue.log",
     format="{asctime} - {levelname} - {message}",
     style="{"
 )
